@@ -20,4 +20,9 @@ This tool allows you to search for code in your Bitbucket workspace using a natu
 * `--workspace`: The name of your Bitbucket workspace.
 * `--model`: The LLM model to use for generating results (default: "llama3.3").
 * `--temperature`: The temperature for LLM generation (default: 0.2).
-* `--top_p`: The top P for LLM generation (default: 1).
+
+## Example
+
+```bash
+APP_USERNAME=myapp APP_PASSWORD=mypass uv run bitbucket_tool.py --model=devstral --prompt 'Find all files containing ABCD in MYPROJ project. Fetch 10 pages max.' --workspace=myworkspace --temperature=0.2
+```

@@ -6,14 +6,15 @@
 import argparse
 import logging
 import os
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
+
 import llm
 from atlassian.bitbucket.cloud import Cloud
 
 logger = logging.getLogger(__name__)
 
 SYNTAX_RULES = """Following are the syntax rules for searching files in Bitbucket:
-A query in Bitbucket has to contain at least one search term, which can either be a single word or a phrase surrounded by quotes.
+A query in Bitbucket has to contain one search term.
 Search operators are words that can be added to searches to help narrow down the results. Operators must be in ALL CAPS. These are the search operators that can be used to search for files:
 AND
 OR
@@ -26,14 +27,17 @@ Single characters within search terms are ignored as they’re not indexed by Bi
 Case is not preserved, however search operators must be in ALL CAPS.
 Queries cannot have more than 9 expressions (e.g. combinations of terms and operators).
 To specify a programming language, use the `lang:` operator followed by the language name (e.g. `lang:python`), so if the query is "my_function lang:python", it will search for the term "def my_function" in Python files.
+To specify a project use  project: operator followed by the project name (e.g. `project:my_project`), so if the query is "my_function project:my_project", it will search for the term "def my_function" in files of the specified project.
 """
 
-APP_USERNAME = os.environ.get("APP_USERNAME")
-APP_PASSWORD = os.environ.get("APP_PASSWORD")
+APP_USERNAME = os.environ.get("APP_USERNAME", "")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+MAX_PAGE = 100  # Maximum number of pages to fetch for search results
 
 
-class BitbucketCodeSearch():
-    def __init__(self,workspace_name: str, url: str = "https://api.bitbucket.org/", app_username: str = APP_USERNAME, app_password: str = APP_PASSWORD):
+class BitbucketCodeSearch:
+    def __init__(self, workspace_name: str, url: str = "https://api.bitbucket.org/", app_username: str = APP_USERNAME, app_password: str = APP_PASSWORD):
         """
         Initialize BitbucketCodeSearch client.
 
@@ -53,7 +57,7 @@ class BitbucketCodeSearch():
         )
         self.workspace = self.client.workspaces.get(workspace_name)
 
-    def _get_all_search_results(self, search_query: str) -> List[dict]:
+    def _get_all_search_results(self, search_query: str, max_page: int = MAX_PAGE) -> List[dict]:
         """
         Fetch all search results across multiple pages.
 
@@ -81,10 +85,13 @@ class BitbucketCodeSearch():
                 break
 
             page += 1
+            if page > max_page:
+                logger.warning("Reached maximum page limit of %s", max_page)
+                break
 
         return all_results
 
-    def get_file_names_with_matches(self, search_query: str) -> List[str]:
+    def get_file_names_with_matches(self, search_query: str, max_page: int = MAX_PAGE) -> List[str]:
         """
         Get file names that contain matches for the search query.
 
@@ -94,7 +101,7 @@ class BitbucketCodeSearch():
         Returns:
             List of file names with repository name as prefix
         """
-        results = self._get_all_search_results(search_query)
+        results = self._get_all_search_results(search_query, max_page)
         file_names = []
 
         for result in results:
@@ -122,7 +129,7 @@ class BitbucketCodeSearch():
 
         return file_names
 
-    def get_matches(self, search_query: str) -> List[Tuple[str, str]]:
+    def get_matches(self, search_query: str, max_page: int = MAX_PAGE) -> List[Tuple[str, str]]:
         """
         Get matches for the search query.
 
@@ -132,7 +139,7 @@ class BitbucketCodeSearch():
         Returns:
             List of tuples (file_name, formatted_matches)
         """
-        results = self._get_all_search_results(search_query)
+        results = self._get_all_search_results(search_query, max_page)
         formatted_results = []
 
         for result in results:
@@ -159,7 +166,84 @@ class BitbucketCodeSearch():
 
         return formatted_results
 
-    def _format_content_matches(self, content_matches: List[dict], highlight: bool=False) -> str:
+    def get_raw_matches(self, search_query: str, max_page: int = MAX_PAGE) -> List[Dict[str, Any]]:
+        """
+        Get matches for the search query.
+
+        Args:
+            search_query: The search query string
+
+        Returns:
+            List of dictionaries:
+            [
+                {
+                  "type": "code_search_result",
+                  "content_match_count": 2,
+                  "content_matches": [
+                    {
+                      "lines": [
+                        {
+                          "line": 2,
+                          "segments": []
+                        },
+                        {
+                          "line": 3,
+                          "segments": [
+                            {
+                              "text": "def "
+                            },
+                            {
+                              "text": "foo",
+                              "match": true
+                            },
+                            {
+                              "text": "():"
+                            }
+                          ]
+                        },
+                        {
+                          "line": 4,
+                          "segments": [
+                            {
+                              "text": "    print(\"snek\")"
+                            }
+                          ]
+                        },
+                        {
+                          "line": 5,
+                          "segments": []
+                        }
+                      ]
+                    }
+                  ],
+                  "path_matches": [
+                    {
+                      "text": "src/"
+                    },
+                    {
+                      "text": "foo",
+                      "match": true
+                    },
+                    {
+                      "text": ".py"
+                    }
+                  ],
+                  "file": {
+                    "path": "src/foo.py",
+                    "type": "commit_file",
+                    "links": {
+                      "self": {
+                        "href": "https://api.bitbucket.org/2.0/repositories/my-workspace/demo/src/ad6964b5fe2880dbd9ddcad1c89000f1dbcbc24b/src/foo.py"
+                      }
+                    }
+                  }
+                }
+              ]
+
+        """
+        return self._get_all_search_results(search_query, max_page)
+
+    def _format_content_matches(self, content_matches: List[dict], highlight: bool = False) -> str:
         """
         Format content matches into a readable string.
 
@@ -200,15 +284,19 @@ def main(args):
     model = llm.get_model(args.model)
     options = {
         "temperature": args.temperature,
-        "top_p": args.top_p,
     }
+
+    if args.debug:
+        results = bitbucket_tool.get_raw_matches(args.prompt)
+        print(results)
+        exit(0)
 
     chain_response = model.chain(
         args.prompt,
-        tools=[bitbucket_tool.get_matches],
+        tools=[bitbucket_tool.get_matches, bitbucket_tool.get_file_names_with_matches],
         system=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES}",
         after_call=print,
-        options= options,
+        options=options,
     )
 
     for chunk in chain_response:
@@ -223,7 +311,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="llama3.3", help="LLM model to use")
     parser.add_argument("--prompt", type=str, help="Prompt template to use")
     parser.add_argument("--temperature", type=float, default=0.2, help="Temperature for LLM generation")
-    parser.add_argument("--top_p", type=float, default=1, help="Top P for LLM generation")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
     args = parser.parse_args()
     if not args.prompt:
