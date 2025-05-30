@@ -3,6 +3,7 @@
 # dependencies = ["llm", "llm-ollama", "llm-anthropic", "atlassian-python-api"]
 # ///
 
+import json
 import argparse
 import logging
 import os
@@ -91,7 +92,7 @@ class BitbucketCodeSearch:
 
         return all_results
 
-    def get_file_names_with_matches(self, search_query: str, max_page: int = MAX_PAGE) -> List[str]:
+    def get_file_names_with_matches(self, search_query: str, max_page: int = MAX_PAGE) -> str:
         """
         Get file names that contain matches for the search query.
 
@@ -99,7 +100,7 @@ class BitbucketCodeSearch:
             search_query: The search query string
 
         Returns:
-            List of file names with repository name as prefix
+           String representation of file names with matches, separated by newlines.
         """
         results = self._get_all_search_results(search_query, max_page)
         file_names = []
@@ -127,9 +128,9 @@ class BitbucketCodeSearch:
                     else:
                         file_names.append(file_path)
 
-        return file_names
+        return "\n".join(file_names)
 
-    def get_matches(self, search_query: str, max_page: int = MAX_PAGE) -> List[Tuple[str, str]]:
+    def get_matches(self, search_query: str, max_page: int = MAX_PAGE, highlight: bool = False) -> List[Tuple[str, str]]:
         """
         Get matches for the search query.
 
@@ -159,14 +160,14 @@ class BitbucketCodeSearch:
                 file_name = f"{repo_name}/{file_path}" if repo_name else file_path
 
                 # Format content matches
-                formatted_match = self._format_content_matches(result.get("content_matches", []))
+                formatted_match = self._format_content_matches(result.get("content_matches", []), highlight=highlight)
 
                 if formatted_match:
                     formatted_results.append((file_name, formatted_match))
 
         return formatted_results
 
-    def get_raw_matches(self, search_query: str, max_page: int = MAX_PAGE) -> List[Dict[str, Any]]:
+    def get_raw_matches(self, search_query: str, max_page: int = MAX_PAGE) -> str:
         """
         Get matches for the search query.
 
@@ -174,7 +175,8 @@ class BitbucketCodeSearch:
             search_query: The search query string
 
         Returns:
-            List of dictionaries:
+            string representation of the search results in JSON format.
+        Example output:
             [
                 {
                   "type": "code_search_result",
@@ -241,7 +243,8 @@ class BitbucketCodeSearch:
               ]
 
         """
-        return self._get_all_search_results(search_query, max_page)
+        results = self._get_all_search_results(search_query, max_page)
+        return json.dumps(results)
 
     def _format_content_matches(self, content_matches: List[dict], highlight: bool = False) -> str:
         """
@@ -286,15 +289,23 @@ def main(args):
         "temperature": args.temperature,
     }
 
-    if args.debug:
+    if args.debug_json:
         results = bitbucket_tool.get_raw_matches(args.prompt)
         print(results)
         exit(0)
 
+    if args.debug:
+        results = bitbucket_tool.get_matches(args.prompt, highlight=True)
+        for file_name, matches in results:
+            print(f"File: {file_name}")
+            print(matches)
+            print("-" * 40)  # Separator for readability
+        exit(0)
+
     chain_response = model.chain(
         args.prompt,
-        tools=[bitbucket_tool.get_matches, bitbucket_tool.get_file_names_with_matches],
-        system=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES}",
+        tools=[bitbucket_tool.get_raw_matches, bitbucket_tool.get_file_names_with_matches],
+        system=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search.",
         after_call=print,
         options=options,
     )
@@ -312,6 +323,7 @@ if __name__ == "__main__":
     parser.add_argument("--prompt", type=str, help="Prompt template to use")
     parser.add_argument("--temperature", type=float, default=0.2, help="Temperature for LLM generation")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--debug_json", action="store_true", help="Output raw JSON results for debugging")
 
     args = parser.parse_args()
     if not args.prompt:
