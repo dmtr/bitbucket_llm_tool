@@ -6,7 +6,7 @@ This tool allows you to search for code in your Bitbucket workspace using a natu
 
 * Python 3.x installed on your system
 * A Bitbucket workspace with API access enabled
-* Environment variables set for `APP_USERNAME`, `APP_PASSWORD`, and `WORKSPACE_NAME`
+* Environment variables set for `APP_USERNAME` and `APP_PASSWORD`
 
 ## Usage
 
