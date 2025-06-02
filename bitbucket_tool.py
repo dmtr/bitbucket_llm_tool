@@ -1,6 +1,6 @@
 #!/usr/bin/env uv run
 # /// script
-# dependencies = ["llm", "llm-ollama", "llm-anthropic", "atlassian-python-api"]
+# dependencies = ["llm", "llm-ollama", "llm-anthropic", "atlassian-python-api", "diskcache"]
 # ///
 
 import json
@@ -11,6 +11,8 @@ from typing import List, Tuple
 
 import llm
 from atlassian.bitbucket.cloud import Cloud
+from diskcache import Cache
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ APP_USERNAME = os.environ.get("APP_USERNAME", "")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
 MAX_PAGE = 100  # Maximum number of pages to fetch for search results
+EXPIRATION_TIME = 3600  # Cache expiration time in seconds
 
 
 class BitbucketCodeSearch:
@@ -76,8 +79,15 @@ class BitbucketCodeSearch:
             if page > 1:
                 params["page"] = page
 
-            logger.info("Fetching page %s", page)
-            response = self.workspace.get("/search/code", params=params)
+            with Cache(directory="cache") as cache:
+                # Use cache to avoid hitting API limits
+                response = cache.get(f"search_code_page_{page}_{search_query}")
+                if response is None:
+                    logger.info("Fetching page %s", page)
+                    response = self.workspace.get("/search/code", params=params)
+                    cache.set(f"search_code_page_{page}_{search_query}", response, expire=EXPIRATION_TIME)
+                else:
+                    logger.info("Using cached response for page %s", page)
 
             if "values" in response:
                 all_results.extend(response["values"])
