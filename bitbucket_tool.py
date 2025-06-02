@@ -7,7 +7,7 @@ import json
 import argparse
 import logging
 import os
-from typing import Any, Dict, List, Tuple
+from typing import List, Tuple
 
 import llm
 from atlassian.bitbucket.cloud import Cloud
