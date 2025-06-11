@@ -3,6 +3,7 @@
 # dependencies = ["llm", "llm-ollama", "llm-anthropic", "atlassian-python-api", "diskcache"]
 # ///
 
+import cmd
 import json
 import argparse
 import logging
@@ -292,6 +293,103 @@ class BitbucketCodeSearch:
         return "\n".join(formatted_lines)
 
 
+class ConversationHandler:
+    def __init__(self,model, tools=None, system_prompt=None):
+        self.model = model
+        self.tools = tools or []
+        logger.debug("tools: %s", self.tools)
+        self.system_prompt = system_prompt or "You are a helpful assistant."
+        self.conversation = model.conversation(tools=tools)
+
+
+    def get_response(self, prompt: str) -> str:
+        """
+        Get response from the model based on the prompt.
+
+        Args:
+            prompt: The input prompt for the model
+            options: Additional options for the model
+
+        Returns:
+            The response from the model
+        """
+        if self.conversation.responses:
+            response = self.conversation.chain(prompt, tools=self.tools)
+        else:
+            response = self.conversation.chain(prompt, system=self.system_prompt)
+
+        return response.text()
+
+    def new_conversation(self) -> 'ConversationHandler':
+        """
+        Start a new conversation with the model.
+
+        Args:
+            tools: Optional tools to use in the conversation
+            system_prompt: Optional system prompt for the conversation
+
+        Returns:
+            A new ConversationHandler instance
+        """
+        return ConversationHandler(model=self.model, tools=self.tools, system_prompt=self.system_prompt)
+
+    def get_usage_info(self) -> str:
+        """
+        Get usage information for the conversation.
+
+        Returns:
+            A string containing the usage information
+        """
+        if self.conversation.responses:
+            return self.conversation.responses[-1].usage()
+        return "No usage information available yet."
+
+
+class InteractiveLLMShell(cmd.Cmd):
+    def __init__(self, conversion_hanlder, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.conversation_handler = conversion_hanlder
+        self.prompt = "LLM> "
+        self.intro = "Welcome to the LLM interactive shell. Type 'help' for commands."
+
+    def default(self, line: str):
+        """
+        Default command handler for unrecognized commands.
+        """
+        if not line:
+            print("No command entered.")
+            return
+        response = self.conversation_handler.get_response(line)
+        print(response)
+
+
+    def do_chat(self, line: str):
+        """
+        Start new chat.
+        """
+        if not line:
+            print("Prompt cannot be empty.")
+            return
+
+        self.conversation_handler = self.conversation_handler.new_conversation()
+        response = self.conversation_handler.get_response(line)
+        print(response)
+
+    def do_usage(self, line: str):
+        """
+        Get usage information for the conversation.
+        """
+        usage_info = self.conversation_handler.get_usage_info()
+        print(usage_info)
+
+    def do_exit(self, line):
+        """
+        Exit the interactive shell.
+        """
+        print("Exiting the interactive shell.")
+        return True
+    
+
 def main(args):
     bitbucket_tool = BitbucketCodeSearch(workspace_name=args.workspace)
     model = llm.get_model(args.model)
@@ -312,6 +410,13 @@ def main(args):
             print("-" * 40)  # Separator for readability
         exit(0)
 
+    if args.interactive:
+        conversation_handler = ConversationHandler(model=model, tools=[bitbucket_tool.get_raw_matches, bitbucket_tool.get_file_names_with_matches], system_prompt=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search.")
+        shell = InteractiveLLMShell(conversation_handler)
+        shell.do_chat(args.prompt)  # Initial prompt
+        shell.cmdloop()
+        return
+
     chain_response = model.chain(
         args.prompt,
         tools=[bitbucket_tool.get_raw_matches, bitbucket_tool.get_file_names_with_matches],
@@ -325,17 +430,20 @@ def main(args):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
     parser = argparse.ArgumentParser(description="Bitbucket Code Search Tool")
+    parser.add_argument("--log_level", type=str, default="INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
     parser.add_argument("--workspace", type=str, help="Bitbucket workspace name")
     parser.add_argument("--model", type=str, default="llama3.3", help="LLM model to use")
     parser.add_argument("--prompt", type=str, help="Prompt template to use")
     parser.add_argument("--temperature", type=float, default=0.2, help="Temperature for LLM generation")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--debug_json", action="store_true", help="Output raw JSON results for debugging")
+    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
 
     args = parser.parse_args()
+
+    logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s - %(levelname)s - %(message)s")
+
     if not args.prompt:
         raise ValueError("Prompt must be provided")
 
