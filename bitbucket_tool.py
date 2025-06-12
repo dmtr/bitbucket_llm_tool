@@ -42,7 +42,13 @@ EXPIRATION_TIME = 3600  # Cache expiration time in seconds
 
 
 class BitbucketCodeSearch:
-    def __init__(self, workspace_name: str, url: str = "https://api.bitbucket.org/", app_username: str = APP_USERNAME, app_password: str = APP_PASSWORD):
+    def __init__(
+        self,
+        workspace_name: str,
+        url: str = "https://api.bitbucket.org/",
+        app_username: str = APP_USERNAME,
+        app_password: str = APP_PASSWORD,
+    ):
         """
         Initialize BitbucketCodeSearch client.
 
@@ -62,7 +68,9 @@ class BitbucketCodeSearch:
         )
         self.workspace = self.client.workspaces.get(workspace_name)
 
-    def _get_all_search_results(self, search_query: str, max_page: int = MAX_PAGE) -> List[dict]:
+    def _get_all_search_results(
+        self, search_query: str, max_page: int = MAX_PAGE
+    ) -> List[dict]:
         """
         Fetch all search results across multiple pages.
 
@@ -86,7 +94,11 @@ class BitbucketCodeSearch:
                 if response is None:
                     logger.info("Fetching page %s", page)
                     response = self.workspace.get("/search/code", params=params)
-                    cache.set(f"search_code_page_{page}_{search_query}", response, expire=EXPIRATION_TIME)
+                    cache.set(
+                        f"search_code_page_{page}_{search_query}",
+                        response,
+                        expire=EXPIRATION_TIME,
+                    )
                 else:
                     logger.info("Using cached response for page %s", page)
 
@@ -103,7 +115,9 @@ class BitbucketCodeSearch:
 
         return all_results
 
-    def get_file_names_with_matches(self, search_query: str, max_page: int = MAX_PAGE) -> str:
+    def get_file_names_with_matches(
+        self, search_query: str, max_page: int = MAX_PAGE
+    ) -> str:
         """
         Get file names that contain matches for the search query.
 
@@ -141,7 +155,9 @@ class BitbucketCodeSearch:
 
         return "\n".join(file_names)
 
-    def get_matches(self, search_query: str, max_page: int = MAX_PAGE, highlight: bool = False) -> List[Tuple[str, str]]:
+    def get_matches(
+        self, search_query: str, max_page: int = MAX_PAGE, highlight: bool = False
+    ) -> List[Tuple[str, str]]:
         """
         Get matches for the search query.
 
@@ -171,7 +187,9 @@ class BitbucketCodeSearch:
                 file_name = f"{repo_name}/{file_path}" if repo_name else file_path
 
                 # Format content matches
-                formatted_match = self._format_content_matches(result.get("content_matches", []), highlight=highlight)
+                formatted_match = self._format_content_matches(
+                    result.get("content_matches", []), highlight=highlight
+                )
 
                 if formatted_match:
                     formatted_results.append((file_name, formatted_match))
@@ -257,7 +275,9 @@ class BitbucketCodeSearch:
         results = self._get_all_search_results(search_query, max_page)
         return json.dumps(results)
 
-    def _format_content_matches(self, content_matches: List[dict], highlight: bool = False) -> str:
+    def _format_content_matches(
+        self, content_matches: List[dict], highlight: bool = False
+    ) -> str:
         """
         Format content matches into a readable string.
 
@@ -294,13 +314,12 @@ class BitbucketCodeSearch:
 
 
 class ConversationHandler:
-    def __init__(self,model, tools=None, system_prompt=None):
+    def __init__(self, model, tools=None, system_prompt=None):
         self.model = model
         self.tools = tools or []
         logger.debug("tools: %s", self.tools)
         self.system_prompt = system_prompt or "You are a helpful assistant."
         self.conversation = model.conversation(tools=tools)
-
 
     def get_response(self, prompt: str) -> str:
         """
@@ -320,7 +339,7 @@ class ConversationHandler:
 
         return response.text()
 
-    def new_conversation(self) -> 'ConversationHandler':
+    def new_conversation(self) -> "ConversationHandler":
         """
         Start a new conversation with the model.
 
@@ -331,7 +350,9 @@ class ConversationHandler:
         Returns:
             A new ConversationHandler instance
         """
-        return ConversationHandler(model=self.model, tools=self.tools, system_prompt=self.system_prompt)
+        return ConversationHandler(
+            model=self.model, tools=self.tools, system_prompt=self.system_prompt
+        )
 
     def get_usage_info(self) -> str:
         """
@@ -362,7 +383,6 @@ class InteractiveLLMShell(cmd.Cmd):
         response = self.conversation_handler.get_response(line)
         print(response)
 
-
     def do_chat(self, line: str):
         """
         Start new chat.
@@ -388,7 +408,7 @@ class InteractiveLLMShell(cmd.Cmd):
         """
         print("Exiting the interactive shell.")
         return True
-    
+
 
 def main(args):
     bitbucket_tool = BitbucketCodeSearch(workspace_name=args.workspace)
@@ -411,7 +431,14 @@ def main(args):
         exit(0)
 
     if args.interactive:
-        conversation_handler = ConversationHandler(model=model, tools=[bitbucket_tool.get_raw_matches, bitbucket_tool.get_file_names_with_matches], system_prompt=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search.")
+        conversation_handler = ConversationHandler(
+            model=model,
+            tools=[
+                bitbucket_tool.get_raw_matches,
+                bitbucket_tool.get_file_names_with_matches,
+            ],
+            system_prompt=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search.",
+        )
         shell = InteractiveLLMShell(conversation_handler)
         shell.do_chat(args.prompt)  # Initial prompt
         shell.cmdloop()
@@ -419,7 +446,10 @@ def main(args):
 
     chain_response = model.chain(
         args.prompt,
-        tools=[bitbucket_tool.get_raw_matches, bitbucket_tool.get_file_names_with_matches],
+        tools=[
+            bitbucket_tool.get_raw_matches,
+            bitbucket_tool.get_file_names_with_matches,
+        ],
         system=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search.",
         after_call=print,
         options=options,
@@ -431,18 +461,36 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bitbucket Code Search Tool")
-    parser.add_argument("--log_level", type=str, default="INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="INFO",
+        help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
     parser.add_argument("--workspace", type=str, help="Bitbucket workspace name")
-    parser.add_argument("--model", type=str, default="llama3.3", help="LLM model to use")
+    parser.add_argument(
+        "--model", type=str, default="llama3.3", help="LLM model to use"
+    )
     parser.add_argument("--prompt", type=str, help="Prompt template to use")
-    parser.add_argument("--temperature", type=float, default=0.2, help="Temperature for LLM generation")
+    parser.add_argument(
+        "--temperature", type=float, default=0.2, help="Temperature for LLM generation"
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
-    parser.add_argument("--debug_json", action="store_true", help="Output raw JSON results for debugging")
-    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
+    parser.add_argument(
+        "--debug_json",
+        action="store_true",
+        help="Output raw JSON results for debugging",
+    )
+    parser.add_argument(
+        "--interactive", action="store_true", help="Run in interactive mode"
+    )
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
 
     if not args.prompt:
         raise ValueError("Prompt must be provided")
