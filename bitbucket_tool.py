@@ -31,7 +31,7 @@ Single characters within search terms are ignored as they’re not indexed by Bi
 Case is not preserved, however search operators must be in ALL CAPS.
 Queries cannot have more than 9 expressions (e.g. combinations of terms and operators).
 To specify a programming language, use the `lang:` operator followed by the language name (e.g. `lang:python`), so if the query is "my_function lang:python", it will search for the term "def my_function" in Python files.
-To specify a project use  project: operator followed by the project name (e.g. `project:my_project`), so if the query is "my_function project:my_project", it will search for the term "def my_function" in files of the specified project.
+Bitbucket can group repositories by projects. To specify a project use  project: operator followed by the project name (e.g. `project:my_project`), so if the query is "my_function project:my_project", it will search for the term "def my_function" in files of the specified project.
 """
 
 APP_USERNAME = os.environ.get("APP_USERNAME", "")
@@ -39,6 +39,16 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
 MAX_PAGE = 100  # Maximum number of pages to fetch for search results
 EXPIRATION_TIME = 3600  # Cache expiration time in seconds
+
+
+def get_system_prompt() -> str:
+    """
+    Get the system prompt for the conversation.
+
+    Returns:
+        str: The system prompt for the conversation
+    """
+    return f"Act as an Senior Software engineer. Use the BitbucketCodeSearch tool to search for code. {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search."
 
 
 class BitbucketCodeSearch:
@@ -68,9 +78,7 @@ class BitbucketCodeSearch:
         )
         self.workspace = self.client.workspaces.get(workspace_name)
 
-    def _get_all_search_results(
-        self, search_query: str, max_page: int = MAX_PAGE
-    ) -> List[dict]:
+    def _get_all_search_results(self, search_query: str, max_page: int = MAX_PAGE) -> List[dict]:
         """
         Fetch all search results across multiple pages.
 
@@ -115,9 +123,7 @@ class BitbucketCodeSearch:
 
         return all_results
 
-    def get_file_names_with_matches(
-        self, search_query: str, max_page: int = MAX_PAGE
-    ) -> str:
+    def get_file_names_with_matches(self, search_query: str, max_page: int = MAX_PAGE) -> str:
         """
         Get file names that contain matches for the search query.
 
@@ -155,9 +161,7 @@ class BitbucketCodeSearch:
 
         return "\n".join(file_names)
 
-    def get_matches(
-        self, search_query: str, max_page: int = MAX_PAGE, highlight: bool = False
-    ) -> List[Tuple[str, str]]:
+    def get_matches(self, search_query: str, max_page: int = MAX_PAGE, highlight: bool = False) -> List[Tuple[str, str]]:
         """
         Get matches for the search query.
 
@@ -187,9 +191,7 @@ class BitbucketCodeSearch:
                 file_name = f"{repo_name}/{file_path}" if repo_name else file_path
 
                 # Format content matches
-                formatted_match = self._format_content_matches(
-                    result.get("content_matches", []), highlight=highlight
-                )
+                formatted_match = self._format_content_matches(result.get("content_matches", []), highlight=highlight)
 
                 if formatted_match:
                     formatted_results.append((file_name, formatted_match))
@@ -275,9 +277,7 @@ class BitbucketCodeSearch:
         results = self._get_all_search_results(search_query, max_page)
         return json.dumps(results)
 
-    def _format_content_matches(
-        self, content_matches: List[dict], highlight: bool = False
-    ) -> str:
+    def _format_content_matches(self, content_matches: List[dict], highlight: bool = False) -> str:
         """
         Format content matches into a readable string.
 
@@ -314,12 +314,13 @@ class BitbucketCodeSearch:
 
 
 class ConversationHandler:
-    def __init__(self, model, tools=None, system_prompt=None):
+    def __init__(self, model, tools=None, system_prompt=None, options=None):
         self.model = model
         self.tools = tools or []
         logger.debug("tools: %s", self.tools)
         self.system_prompt = system_prompt or "You are a helpful assistant."
-        self.conversation = model.conversation(tools=tools)
+        self.options = options or {}
+        self.conversation = model.conversation()
 
     def get_response(self, prompt: str) -> str:
         """
@@ -335,7 +336,7 @@ class ConversationHandler:
         if self.conversation.responses:
             response = self.conversation.chain(prompt, tools=self.tools)
         else:
-            response = self.conversation.chain(prompt, system=self.system_prompt)
+            response = self.conversation.chain(prompt, system=self.system_prompt, tools=self.tools, options=self.options)
 
         return response.text()
 
@@ -350,9 +351,7 @@ class ConversationHandler:
         Returns:
             A new ConversationHandler instance
         """
-        return ConversationHandler(
-            model=self.model, tools=self.tools, system_prompt=self.system_prompt
-        )
+        return ConversationHandler(model=self.model, tools=self.tools, system_prompt=self.system_prompt, options=self.options)
 
     def get_usage_info(self) -> str:
         """
@@ -415,6 +414,7 @@ def main(args):
     model = llm.get_model(args.model)
     options = {
         "temperature": args.temperature,
+        "num_ctx": args.n_ctx,
     }
 
     if args.debug_json:
@@ -437,7 +437,8 @@ def main(args):
                 bitbucket_tool.get_raw_matches,
                 bitbucket_tool.get_file_names_with_matches,
             ],
-            system_prompt=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search.",
+            system_prompt=get_system_prompt(),
+            options=options,
         )
         shell = InteractiveLLMShell(conversation_handler)
         shell.do_chat(args.prompt)  # Initial prompt
@@ -450,7 +451,7 @@ def main(args):
             bitbucket_tool.get_raw_matches,
             bitbucket_tool.get_file_names_with_matches,
         ],
-        system=f"Use the BitbucketCodeSearch tool to search for code. Follow the instructions: {SYNTAX_RULES} Be sure to use the correct syntax for Bitbucket code search.",
+        system=get_system_prompt(),
         after_call=print,
         options=options,
     )
@@ -468,22 +469,17 @@ if __name__ == "__main__":
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
     parser.add_argument("--workspace", type=str, help="Bitbucket workspace name")
-    parser.add_argument(
-        "--model", type=str, default="llama3.3", help="LLM model to use"
-    )
+    parser.add_argument("--model", type=str, default="llama3.3", help="LLM model to use")
     parser.add_argument("--prompt", type=str, help="Prompt template to use")
-    parser.add_argument(
-        "--temperature", type=float, default=0.2, help="Temperature for LLM generation"
-    )
+    parser.add_argument("--temperature", type=float, default=0.2, help="Temperature for LLM generation")
+    parser.add_argument("--n_ctx", type=int, default=8192, help="Number of context tokens for LLM")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument(
         "--debug_json",
         action="store_true",
         help="Output raw JSON results for debugging",
     )
-    parser.add_argument(
-        "--interactive", action="store_true", help="Run in interactive mode"
-    )
+    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
 
     args = parser.parse_args()
 
